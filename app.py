@@ -6,6 +6,7 @@ import math
 import calendar
 import gspread
 from google.oauth2.service_account import Credentials
+import streamlit.components.v1 as components
 
 st.set_page_config(page_title="폐기물 관리 대장 자동화", layout="wide")
 st.title("♻️ 폐기물 관리 대장 시스템")
@@ -29,19 +30,20 @@ def get_gspread_client():
 
 client = get_gspread_client()
 
-# --- 탭 구성 ---
-tab1, tab2, tab3, tab4 = st.tabs(["📝 입력", "📋 리스트 조회", "🖨️ 양식 출력", "💰 월 마감"])
+# --- 탭 구성 (3개) ---
+tab1, tab2, tab3 = st.tabs(["📝 입력", "📋 리스트 조회 및 양식 출력", "💰 월 마감"])
 
 # --- 탭 1: 데이터 입력 ---
 with tab1:
     st.header("1. 통수 입력")
     
-    col1, col2, col3 = st.columns(3)
+    col1, col2 = st.columns(2)
     year = col1.number_input("년도", value=2026, step=1)
     month = col2.number_input("월", value=10, min_value=1, max_value=12, step=1)
     num_days = calendar.monthrange(year, month)[1]
     
-    prev_unhandled = col3.number_input("전월 미처리량(Kg)", min_value=0, value=100, step=10)
+    # 전월 미처리량 입력란 삭제, 내부적으로 0으로 고정
+    prev_unhandled = 0
     
     st.info("💡 **팁:** 기존에 구글 시트에 저장해둔 이번 달 데이터가 있다면 먼저 불러오세요.")
     
@@ -194,56 +196,39 @@ with tab1:
             st.warning("구글 시트에 연결되지 않아 저장되지 않았습니다.")
 
 
-# --- 탭 2: 리스트 조회 ---
+# --- 탭 2: 리스트 조회 및 양식 출력 (통합) ---
 with tab2:
-    st.header("2. 폐기물 처리 리스트 확인")
-    st.write("구글 시트에 저장된 상세 데이터를 조회합니다.")
+    st.header("2. 리스트 조회 및 대장 양식 출력")
+    st.write("구글 시트에 저장된 데이터를 조회하고, 인쇄용 대장 양식을 출력합니다.")
     
     col_v1, col_v2 = st.columns(2)
     view_year = col_v1.number_input("조회 년도", value=2026, step=1, key="v_year")
     view_month = col_v2.number_input("조회 월", value=10, min_value=1, max_value=12, step=1, key="v_month")
     
-    if st.button("📊 시트에서 리스트 불러오기"):
+    if st.button("📊 데이터 조회 및 양식 생성", type="primary"):
         if client:
             try:
                 doc = client.open_by_url(SHEET_URL)
                 v_sheet_name = f"DB_{view_year}_{view_month:02d}"
                 worksheet = doc.worksheet(v_sheet_name)
                 df_view = pd.DataFrame(worksheet.get_all_records())
-                st.dataframe(df_view, use_container_width=True)
-            except gspread.exceptions.WorksheetNotFound:
-                st.warning(f"{view_year}년 {view_month}월의 데이터가 구글 시트에 존재하지 않습니다.")
-            except Exception as e:
-                st.error(f"불러오기 실패: {e}")
-        else:
-            st.error("API 연동 설정을 확인해주세요.")
-
-
-# --- 탭 3: 대장 양식 출력 (PDF) ---
-with tab3:
-    st.header("3. 대장 양식 출력 및 PDF 저장")
-    st.write("요청하신 공식 문서 양식 템플릿입니다. 아래 버튼을 눌러 양식을 생성하고 PDF로 인쇄/저장할 수 있습니다.")
-    
-    if st.button("🖨️ 대장 양식 생성하기", type="primary"):
-        if client:
-            try:
-                doc = client.open_by_url(SHEET_URL)
-                worksheet = doc.worksheet(f"DB_{year}_{month:02d}")
-                df_print = pd.DataFrame(worksheet.get_all_records())
                 
-                # 합계 및 미처리량 계산
-                if len(df_print) > 0:
-                    first_row_cum = pd.to_numeric(str(df_print.iloc[0]['누계 발생량(Kg)']).replace('','0'))
-                    first_row_daily = pd.to_numeric(str(df_print.iloc[0]['일일 발생량(Kg)']).replace('','0'))
+                st.subheader(f"📋 {view_year}년 {view_month}월 상세 리스트")
+                st.dataframe(df_view, use_container_width=True)
+                
+                # --- 양식 출력 로직 시작 ---
+                if len(df_view) > 0:
+                    first_row_cum = pd.to_numeric(str(df_view.iloc[0]['누계 발생량(Kg)']).replace('','0'))
+                    first_row_daily = pd.to_numeric(str(df_view.iloc[0]['일일 발생량(Kg)']).replace('','0'))
                     dynamic_prev = int(first_row_cum - first_row_daily)
                 else:
                     dynamic_prev = 0
                     
-                sum_gen = pd.to_numeric(df_print['일일 발생량(Kg)'].replace('', 0)).sum()
-                sum_buckets = pd.to_numeric(df_print['통수량'].replace('', 0)).sum()
-                sum_proc = pd.to_numeric(df_print['일일 처리량(Kg)'].replace('', 0)).sum()
+                sum_gen = pd.to_numeric(df_view['일일 발생량(Kg)'].replace('', 0)).sum()
+                sum_buckets = pd.to_numeric(df_view['통수량'].replace('', 0)).sum()
+                sum_proc = pd.to_numeric(df_view['일일 처리량(Kg)'].replace('', 0)).sum()
 
-                # HTML/CSS 양식 템플릿 제작 (이미지와 100% 동일한 구조)
+                # HTML/CSS 양식 템플릿 제작
                 html_template = f'''
                 <!DOCTYPE html>
                 <html lang="ko">
@@ -252,7 +237,7 @@ with tab3:
                 <title>폐기물 관리 대장</title>
                 <style>
                     @page {{ size: A4 landscape; margin: 15mm; }}
-                    body {{ font-family: 'Malgun Gothic', dotum, sans-serif; font-size: 11px; color: black; }}
+                    body {{ font-family: 'Malgun Gothic', dotum, sans-serif; font-size: 11px; color: black; background-color: white; }}
                     .header-container {{ display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 10px; }}
                     .title {{ font-size: 32px; font-weight: bold; letter-spacing: 2px; }}
                     .sign-table {{ border-collapse: collapse; text-align: center; font-size: 12px; }}
@@ -266,7 +251,7 @@ with tab3:
                     .dotted-row td {{ border-top: 1px dotted black; border-bottom: 1px dotted black; }}
                 </style>
                 </head>
-                <body onload="window.print()">
+                <body>
                     <div class="header-container">
                         <div class="title">폐기물 관리 대장</div>
                         <table class="sign-table border-thick">
@@ -277,7 +262,7 @@ with tab3:
                     <table class="main-table border-thick">
                         <tr>
                             <th colspan="2">발생월</th>
-                            <th colspan="3">{year}년 {month}월</th>
+                            <th colspan="3">{view_year}년 {view_month}월</th>
                             <th colspan="2">작성주기</th>
                             <th colspan="2">발생 시</th>
                             <th colspan="2">작성자</th>
@@ -317,8 +302,7 @@ with tab3:
                         </tr>
                 '''
                 
-                # 데이터 행 추가
-                for _, row in df_print.iterrows():
+                for _, row in df_view.iterrows():
                     date_val = str(row['발생일자'])
                     if '-' in date_val:
                         y, m, d = date_val.split('-')
@@ -363,38 +347,39 @@ with tab3:
                 </html>
                 '''
                 
-                st.session_state.html_content = html_template
-                st.session_state.html_filename = f"폐기물관리대장_{year}년_{month}월.html"
+                html_download = html_template.replace("<body>", "<body onload='window.print()'>")
                 
+                st.markdown("---")
+                st.subheader("📄 인쇄 양식 미리보기")
+                components.html(html_template, height=800, scrolling=True)
+                
+                st.markdown("---")
+                st.success("✅ 문서 내용을 확인하셨다면 아래 버튼을 눌러 인쇄/저장하세요.")
+                
+                st.download_button(
+                    label="📥 인쇄용 대장 다운로드 (클릭하여 열면 PDF 저장 창이 열립니다)",
+                    data=html_download,
+                    file_name=f"폐기물관리대장_{view_year}년_{view_month}월.html",
+                    mime="text/html",
+                    use_container_width=True
+                )
+                
+            except gspread.exceptions.WorksheetNotFound:
+                st.warning(f"{view_year}년 {view_month}월의 데이터가 구글 시트에 존재하지 않습니다.")
             except Exception as e:
-                st.error("데이터를 불러오는 데 실패했습니다. 먼저 [입력] 탭에서 데이터를 저장해주세요.")
-                
-    # 다운로드 버튼 영역
-    if 'html_content' in st.session_state:
-        st.markdown("---")
-        st.success("✅ 문서 렌더링 완료! 아래 버튼을 눌러 양식을 다운로드하세요.")
-        
-        st.download_button(
-            label="📥 인쇄용 대장 다운로드 (클릭하여 열면 PDF 저장 창이 열립니다)",
-            data=st.session_state.html_content,
-            file_name=st.session_state.html_filename,
-            mime="text/html",
-            use_container_width=True
-        )
-        
-        st.info('''
-        💡 **PDF 저장 및 출력 방법 가이드:** 
-        1. 위 버튼을 눌러 `.html` 파일을 다운로드합니다.
-        2. 다운로드된 파일을 더블클릭하여 인터넷 브라우저(크롬, 엣지 등)로 엽니다.
-        3. 문서가 열림과 동시에 **자동으로 인쇄 설정 창**이 나타납니다.
-        4. 대상(프린터) 옵션에서 **'PDF로 저장'**을 선택하면 A4 가로 사이즈로 완벽하게 맞춰진 PDF 파일이 저장됩니다.
-        ''')
+                st.error(f"불러오기 실패: {e}")
+        else:
+            st.error("API 연동 설정을 확인해주세요.")
 
 
-# --- 탭 4: 월 마감 정산 ---
-with tab4:
-    st.header("4. 업체 월 마감 정산")
+# --- 탭 3: 월 마감 정산 ---
+with tab3:
+    st.header("3. 업체 월 마감 정산")
     st.write("위탁 처리 업체와의 정산을 위한 월별 금액 합계 및 기록을 진행합니다.")
+    
+    col_c1, col_c2 = st.columns(2)
+    close_year = col_c1.number_input("마감 년도", value=2026, step=1)
+    close_month = col_c2.number_input("마감 월", value=10, min_value=1, max_value=12, step=1)
     
     unit_price = st.number_input("1통 처리 단가(원)", min_value=0, value=50000, step=1000)
     
@@ -402,24 +387,24 @@ with tab4:
         if client:
             try:
                 doc = client.open_by_url(SHEET_URL)
-                worksheet = doc.worksheet(f"DB_{year}_{month:02d}")
+                worksheet = doc.worksheet(f"DB_{close_year}_{close_month:02d}")
                 df_print = pd.DataFrame(worksheet.get_all_records())
                 
                 total_buckets = pd.to_numeric(df_print['통수량'].replace('', 0)).sum()
                 total_price = total_buckets * unit_price
                 
                 st.markdown("---")
-                st.subheader(f"✅ {year}년 {month}월 마감 요약")
+                st.subheader(f"✅ {close_year}년 {close_month}월 마감 요약")
                 st.write(f"- **총 처리 통수:** {int(total_buckets)}통")
                 st.write(f"- **총 청구 금액:** {int(total_price):,}원")
                 
-                st.session_state.pending_month = month
-                st.session_state.pending_year = year
+                st.session_state.pending_month = close_month
+                st.session_state.pending_year = close_year
                 st.session_state.pending_buckets = int(total_buckets)
                 st.session_state.pending_price = int(total_price)
                 
             except Exception as e:
-                st.error("먼저 [입력] 탭에서 데이터를 저장한 후 마감을 진행해주세요.")
+                st.error("해당 월의 데이터가 시트에 없습니다. 입력 탭에서 먼저 데이터를 저장해주세요.")
                 
     if 'pending_buckets' in st.session_state:
         if st.button("💾 이 정산 내역을 구글시트 [월마감] 탭에 최종 기록하기"):
