@@ -328,7 +328,12 @@ with tab2:
                         </tr>
                 '''
                 
-                for _, row in df_view.iterrows():
+                # 중복된 전월 미처리량 행을 생성하지 않도록 데이터 프레임의 내용을 그대로 출력
+                for index, row in df_view.iterrows():
+                    # 데이터 프레임에 이미 "전월 미처리량"이라는 문자열이 날짜 칸에 들어가 있는 경우 건너뛰기
+                    if "전월" in str(row['발생일자']) or "미처리량" in str(row['발생일자']):
+                         continue
+                         
                     date_val = str(row['발생일자'])
                     if '-' in date_val:
                         y, m, d = date_val.split('-')
