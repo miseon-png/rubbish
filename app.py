@@ -29,12 +29,12 @@ def get_gspread_client():
 
 client = get_gspread_client()
 
-# --- 탭 구성 ---
-tab1, tab2, tab3 = st.tabs(["📝 데이터 입력", "📋 폐기물 처리 리스트 조회", "🖨️ 양식 출력 및 월마감"])
+# --- 탭 구성 (이름 간소화) ---
+tab1, tab2, tab3, tab4 = st.tabs(["📝 입력", "📋 리스트 조회", "🖨️ 양식 출력", "💰 월 마감"])
 
 # --- 탭 1: 데이터 입력 ---
 with tab1:
-    st.header("1. 매일/매주 통수량 입력")
+    st.header("1. 통수 입력")
     
     col1, col2, col3 = st.columns(3)
     year = col1.number_input("년도", value=2026, step=1)
@@ -45,10 +45,11 @@ with tab1:
     
     st.info("💡 **팁:** 기존에 구글 시트에 저장해둔 이번 달 데이터가 있다면 먼저 불러오세요.")
     
-    # 세션 상태 초기화
-    if 'bucket_inputs' not in st.session_state or st.session_state.get('current_month') != month:
+    # 세션 상태 초기화 (년도/월이 변경되면 초기화)
+    if 'bucket_inputs' not in st.session_state or st.session_state.get('current_month') != month or st.session_state.get('current_year') != year:
         st.session_state.bucket_inputs = [0] * num_days
         st.session_state.current_month = month
+        st.session_state.current_year = year
 
     sheet_name = f"DB_{year}_{month:02d}"
 
@@ -64,7 +65,6 @@ with tab1:
                 loaded_buckets = []
                 for idx in range(num_days):
                     if idx < len(records):
-                        # 통수량이 빈칸이면 0으로 처리
                         val = records[idx].get("통수량", 0)
                         loaded_buckets.append(int(val) if val != "" else 0)
                     else:
@@ -80,17 +80,45 @@ with tab1:
         else:
             st.error("구글 시트 인증에 실패했습니다. Secrets 설정을 확인하세요.")
 
-    # 통수량 입력을 위한 데이터 프레임
-    df_input = pd.DataFrame({
-        "일자": [f"{month}월 {i:02d}일" for i in range(1, num_days + 1)],
-        "통수량": st.session_state.bucket_inputs
-    })
+    st.markdown("---")
+    st.subheader("📌 특정 날짜 통수 입력")
+    
+    input_col1, input_col2, input_col3 = st.columns([2, 2, 1])
+    
+    with input_col1:
+        selected_date = st.date_input(
+            "날짜 선택", 
+            value=datetime.date(year, month, 1),
+            min_value=datetime.date(year, month, 1),
+            max_value=datetime.date(year, month, num_days)
+        )
+    
+    with input_col2:
+        input_buckets = st.number_input("처리 통수(1통=120kg)", min_value=0, value=0, step=1)
+        
+    with input_col3:
+        st.write("") # 버튼 줄맞춤용 빈공간
+        st.write("")
+        if st.button("➕ 입력 적용", use_container_width=True):
+            day_idx = selected_date.day - 1
+            st.session_state.bucket_inputs[day_idx] = input_buckets
+            st.success(f"{selected_date.strftime('%Y년 %m월 %d일')}에 {input_buckets}통이 입력되었습니다.")
 
-    st.write("▼ 각 일자별 처리한 **통수(1통=120kg)**를 입력/수정하세요.")
-    edited_df = st.data_editor(df_input, num_rows="fixed", use_container_width=True)
+    st.write("▼ **현재 입력된 통수 내역** (이번 달)")
+    # 입력된 데이터만 필터링해서 보여주기
+    entered_data = []
+    for d in range(num_days):
+        if st.session_state.bucket_inputs[d] > 0:
+            entered_data.append({"일자": f"{month}월 {d+1:02d}일", "입력된 통수": st.session_state.bucket_inputs[d]})
+            
+    if entered_data:
+        st.table(pd.DataFrame(entered_data))
+    else:
+        st.info("현재 입력된 통수가 없습니다. 날짜를 선택하여 통수를 입력해주세요.")
 
-    if st.button("🚀 계산 및 구글시트에 전체 저장 (업데이트)", type="primary"):
-        bucket_counts = edited_df["통수량"].tolist()
+    st.markdown("---")
+    if st.button("🚀 계산 및 구글시트에 전체 저장 (업데이트)", type="primary", use_container_width=True):
+        bucket_counts = st.session_state.bucket_inputs
         current_stock = prev_unhandled
         last_process_day = 0
         daily_generated = [0] * num_days
@@ -171,7 +199,7 @@ with tab1:
             except Exception as e:
                 st.error(f"저장 실패: {e}")
         else:
-            st.warning("구글 시트에 연결되지 않아 저장되지 않았습니다. 화면에는 계산 결과만 표시됩니다.")
+            st.warning("구글 시트에 연결되지 않아 저장되지 않았습니다.")
 
 
 # --- 탭 2: 리스트 조회 ---
@@ -199,12 +227,34 @@ with tab2:
             st.error("API 연동 설정을 확인해주세요.")
 
 
-# --- 탭 3: 양식 출력 및 월마감 ---
+# --- 탭 3: 대장 양식 출력 (금액 미포함) ---
 with tab3:
-    st.header("3. 대장 양식 출력 및 월마감 정산")
+    st.header("3. 대장 양식 출력")
+    st.write("관공서 및 내부 보고용 폐기물 관리 대장 양식입니다.")
+    
+    if st.button("🖨️ 현재 달 대장 양식 불러오기"):
+        if client:
+            try:
+                doc = client.open_by_url(SHEET_URL)
+                worksheet = doc.worksheet(f"DB_{year}_{month:02d}")
+                df_print = pd.DataFrame(worksheet.get_all_records())
+                
+                st.subheader(f"📄 {year}년 {month}월 폐기물 관리 대장")
+                # 양식 출력에는 금액이 들어가지 않음
+                st.dataframe(df_print, use_container_width=True, hide_index=True)
+                
+            except Exception as e:
+                st.error("먼저 [입력] 탭에서 이번 달 데이터를 저장한 후 출력해주세요.")
+
+
+# --- 탭 4: 월 마감 정산 ---
+with tab4:
+    st.header("4. 업체 월 마감 정산")
+    st.write("위탁 처리 업체와의 정산을 위한 월별 금액 합계 및 기록을 진행합니다.")
+    
     unit_price = st.number_input("1통 처리 단가(원)", min_value=0, value=50000, step=1000)
     
-    if st.button("🖨️ 현재 달 양식 출력 생성하기"):
+    if st.button("💰 현재 달 정산 내역 계산하기"):
         if client:
             try:
                 doc = client.open_by_url(SHEET_URL)
@@ -215,23 +265,21 @@ with tab3:
                 total_buckets = pd.to_numeric(df_print['통수량'].replace('', 0)).sum()
                 total_price = total_buckets * unit_price
                 
-                st.subheader(f"📄 {year}년 {month}월 폐기물 관리 대장")
-                st.dataframe(df_print, use_container_width=True, hide_index=True)
-                
                 st.markdown("---")
-                st.subheader("💰 월 마감 정산 내역")
-                st.write(f"- **이번 달 총 처리 통수:** {int(total_buckets)}통")
-                st.write(f"- **이번 달 총 청구 금액:** {int(total_price):,}원")
+                st.subheader(f"✅ {year}년 {month}월 마감 요약")
+                st.write(f"- **총 처리 통수:** {int(total_buckets)}통")
+                st.write(f"- **총 청구 금액:** {int(total_price):,}원")
                 
                 st.session_state.pending_month = month
+                st.session_state.pending_year = year
                 st.session_state.pending_buckets = int(total_buckets)
                 st.session_state.pending_price = int(total_price)
                 
             except Exception as e:
-                st.error("먼저 [입력 탭]에서 데이터를 저장한 후 출력해주세요.")
+                st.error("먼저 [입력] 탭에서 데이터를 저장한 후 마감을 진행해주세요.")
                 
     if 'pending_buckets' in st.session_state:
-        if st.button("💾 이 내역을 구글시트 [월마감] 탭에 최종 기록하기"):
+        if st.button("💾 이 정산 내역을 구글시트 [월마감] 탭에 최종 기록하기"):
             try:
                 doc = client.open_by_url(SHEET_URL)
                 try:
@@ -242,14 +290,14 @@ with tab3:
                 
                 now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 ws_closing.append_row([
-                    year, 
+                    st.session_state.pending_year, 
                     f"{st.session_state.pending_month}월", 
                     st.session_state.pending_buckets, 
                     unit_price, 
                     st.session_state.pending_price, 
                     now_str
                 ])
-                st.success("✅ 구글 시트 '월마감' 탭에 금액 정산이 등록되었습니다!")
+                st.success("✅ 구글 시트 '월마감' 탭에 금액 정산 내역이 성공적으로 등록되었습니다!")
                 
             except Exception as e:
                 st.error(f"월마감 저장 중 오류 발생: {e}")
