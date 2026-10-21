@@ -29,7 +29,7 @@ def get_gspread_client():
 
 client = get_gspread_client()
 
-# --- 탭 구성 (이름 간소화) ---
+# --- 탭 구성 ---
 tab1, tab2, tab3, tab4 = st.tabs(["📝 입력", "📋 리스트 조회", "🖨️ 양식 출력", "💰 월 마감"])
 
 # --- 탭 1: 데이터 입력 ---
@@ -45,7 +45,6 @@ with tab1:
     
     st.info("💡 **팁:** 기존에 구글 시트에 저장해둔 이번 달 데이터가 있다면 먼저 불러오세요.")
     
-    # 세션 상태 초기화 (년도/월이 변경되면 초기화)
     if 'bucket_inputs' not in st.session_state or st.session_state.get('current_month') != month or st.session_state.get('current_year') != year:
         st.session_state.bucket_inputs = [0] * num_days
         st.session_state.current_month = month
@@ -53,7 +52,6 @@ with tab1:
 
     sheet_name = f"DB_{year}_{month:02d}"
 
-    # 기존 데이터 불러오기 버튼
     if st.button("☁️ 구글시트에서 이번 달 기존 입력값 불러오기"):
         if client:
             try:
@@ -61,7 +59,6 @@ with tab1:
                 worksheet = doc.worksheet(sheet_name)
                 records = worksheet.get_all_records()
                 
-                # 통수량만 추출하여 입력창에 반영
                 loaded_buckets = []
                 for idx in range(num_days):
                     if idx < len(records):
@@ -97,7 +94,7 @@ with tab1:
         input_buckets = st.number_input("처리 통수(1통=120kg)", min_value=0, value=0, step=1)
         
     with input_col3:
-        st.write("") # 버튼 줄맞춤용 빈공간
+        st.write("")
         st.write("")
         if st.button("➕ 입력 적용", use_container_width=True):
             day_idx = selected_date.day - 1
@@ -105,7 +102,6 @@ with tab1:
             st.success(f"{selected_date.strftime('%Y년 %m월 %d일')}에 {input_buckets}통이 입력되었습니다.")
 
     st.write("▼ **현재 입력된 통수 내역** (이번 달)")
-    # 입력된 데이터만 필터링해서 보여주기
     entered_data = []
     for d in range(num_days):
         if st.session_state.bucket_inputs[d] > 0:
@@ -123,7 +119,6 @@ with tab1:
         last_process_day = 0
         daily_generated = [0] * num_days
         
-        # 역산 분배 로직 (금요일 2배, 15% 랜덤 오차)
         for i in range(num_days):
             buckets = int(bucket_counts[i])
             if buckets > 0:
@@ -146,14 +141,13 @@ with tab1:
                     
                     total_weight = sum(weights)
                     allocated = [math.floor(needed_gen * (w / total_weight)) for w in weights]
-                    allocated[-1] += needed_gen - sum(allocated) # 자투리 보정
+                    allocated[-1] += needed_gen - sum(allocated) 
                     
                     for idx, d in enumerate(days_chunk):
                         daily_generated[d - 1] += allocated[idx]
                 
                 last_process_day = i + 1
 
-        # 결과 생성
         cum_generated = 0
         cum_processed = 0
         final_data = []
@@ -167,33 +161,31 @@ with tab1:
             cum_processed += proc
             
             final_data.append([
-                f"{year}-{month:02d}-{i+1:02d}", # 0: 발생일자
-                "비가식 야채",                    # 1: 성상
-                gen,                             # 2: 일일발생량
-                cum_generated + prev_unhandled,  # 3: 누계발생량
-                "사료용(재사용)" if buckets > 0 else "", # 4: 처리방법
-                "두안균" if buckets > 0 else "",         # 5: 운반자
-                "토림" if buckets > 0 else "",           # 6: 처리자
-                buckets if buckets > 0 else "",          # 7: 통수량
-                proc if proc > 0 else "",                # 8: 일일처리량
-                cum_processed if cum_processed > 0 else "" # 9: 누계처리량
+                f"{year}-{month:02d}-{i+1:02d}", 
+                "비가식 야채",                    
+                gen,                             
+                cum_generated + prev_unhandled,  
+                "사료용(재사용)" if buckets > 0 else "", 
+                "두안균" if buckets > 0 else "",         
+                "토림" if buckets > 0 else "",           
+                buckets if buckets > 0 else "",          
+                proc if proc > 0 else "",                
+                cum_processed if cum_processed > 0 else "" 
             ])
 
         result_df = pd.DataFrame(final_data, columns=[
             "발생일자", "성상", "일일 발생량(Kg)", "누계 발생량(Kg)", "처리방법", "운반자", "처리자", "통수량", "일일 처리량(Kg)", "누계 처리량(Kg)"
         ])
         
-        # 구글 시트에 업데이트
         if client:
             try:
                 doc = client.open_by_url(SHEET_URL)
                 try:
                     worksheet = doc.worksheet(sheet_name)
-                    worksheet.clear() # 기존 데이터 덮어쓰기 위해 초기화
+                    worksheet.clear() 
                 except gspread.exceptions.WorksheetNotFound:
                     worksheet = doc.add_worksheet(title=sheet_name, rows="100", cols="20")
                 
-                # 데이터프레임을 리스트로 변환하여 시트에 업데이트
                 worksheet.update([result_df.columns.values.tolist()] + result_df.values.tolist())
                 st.success(f"✅ 구글 시트 '{sheet_name}' 탭에 {month}월 데이터 전체가 성공적으로 저장(업데이트)되었습니다!")
             except Exception as e:
@@ -227,24 +219,176 @@ with tab2:
             st.error("API 연동 설정을 확인해주세요.")
 
 
-# --- 탭 3: 대장 양식 출력 (금액 미포함) ---
+# --- 탭 3: 대장 양식 출력 (PDF) ---
 with tab3:
-    st.header("3. 대장 양식 출력")
-    st.write("관공서 및 내부 보고용 폐기물 관리 대장 양식입니다.")
+    st.header("3. 대장 양식 출력 및 PDF 저장")
+    st.write("요청하신 공식 문서 양식 템플릿입니다. 아래 버튼을 눌러 양식을 생성하고 PDF로 인쇄/저장할 수 있습니다.")
     
-    if st.button("🖨️ 현재 달 대장 양식 불러오기"):
+    if st.button("🖨️ 대장 양식 생성하기", type="primary"):
         if client:
             try:
                 doc = client.open_by_url(SHEET_URL)
                 worksheet = doc.worksheet(f"DB_{year}_{month:02d}")
                 df_print = pd.DataFrame(worksheet.get_all_records())
                 
-                st.subheader(f"📄 {year}년 {month}월 폐기물 관리 대장")
-                # 양식 출력에는 금액이 들어가지 않음
-                st.dataframe(df_print, use_container_width=True, hide_index=True)
+                # 합계 및 미처리량 계산
+                if len(df_print) > 0:
+                    first_row_cum = pd.to_numeric(str(df_print.iloc[0]['누계 발생량(Kg)']).replace('','0'))
+                    first_row_daily = pd.to_numeric(str(df_print.iloc[0]['일일 발생량(Kg)']).replace('','0'))
+                    dynamic_prev = int(first_row_cum - first_row_daily)
+                else:
+                    dynamic_prev = 0
+                    
+                sum_gen = pd.to_numeric(df_print['일일 발생량(Kg)'].replace('', 0)).sum()
+                sum_buckets = pd.to_numeric(df_print['통수량'].replace('', 0)).sum()
+                sum_proc = pd.to_numeric(df_print['일일 처리량(Kg)'].replace('', 0)).sum()
+
+                # HTML/CSS 양식 템플릿 제작 (이미지와 100% 동일한 구조)
+                html_template = f'''
+                <!DOCTYPE html>
+                <html lang="ko">
+                <head>
+                <meta charset="UTF-8">
+                <title>폐기물 관리 대장</title>
+                <style>
+                    @page {{ size: A4 landscape; margin: 15mm; }}
+                    body {{ font-family: 'Malgun Gothic', dotum, sans-serif; font-size: 11px; color: black; }}
+                    .header-container {{ display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 10px; }}
+                    .title {{ font-size: 32px; font-weight: bold; letter-spacing: 2px; }}
+                    .sign-table {{ border-collapse: collapse; text-align: center; font-size: 12px; }}
+                    .sign-table th, .sign-table td {{ border: 1px solid black; width: 60px; }}
+                    .sign-table th {{ padding: 2px; font-weight: normal; }}
+                    .sign-table td {{ height: 45px; }}
+                    .main-table {{ width: 100%; border-collapse: collapse; text-align: center; }}
+                    .main-table th, .main-table td {{ border: 1px solid black; padding: 4px; }}
+                    .main-table th {{ font-weight: bold; background-color: white; }}
+                    .border-thick {{ border: 2px solid black !important; }}
+                    .dotted-row td {{ border-top: 1px dotted black; border-bottom: 1px dotted black; }}
+                </style>
+                </head>
+                <body onload="window.print()">
+                    <div class="header-container">
+                        <div class="title">폐기물 관리 대장</div>
+                        <table class="sign-table border-thick">
+                            <tr><th>작성</th><th>검토</th><th>승인</th></tr>
+                            <tr><td></td><td></td><td></td></tr>
+                        </table>
+                    </div>
+                    <table class="main-table border-thick">
+                        <tr>
+                            <th colspan="2">발생월</th>
+                            <th colspan="3">{year}년 {month}월</th>
+                            <th colspan="2">작성주기</th>
+                            <th colspan="2">발생 시</th>
+                            <th colspan="2">작성자</th>
+                            <th colspan="2">이미선</th>
+                        </tr>
+                        <tr>
+                            <th colspan="4">발생내역</th>
+                            <th colspan="3">자체처리</th>
+                            <th colspan="6">위탁처리</th>
+                        </tr>
+                        <tr>
+                            <th rowspan="2" style="width:10%;">발생일자</th>
+                            <th rowspan="2" style="width:8%;">성상</th>
+                            <th colspan="2">폐기물발생량(Kg)</th>
+                            <th rowspan="2" style="width:9%;">처리방법</th>
+                            <th colspan="2">처리량(Kg)</th>
+                            <th rowspan="2" style="width:9%;">처리방법</th>
+                            <th rowspan="2" style="width:7%;">운반자</th>
+                            <th rowspan="2" style="width:7%;">처리자</th>
+                            <th colspan="3">처리량(Kg)</th>
+                        </tr>
+                        <tr>
+                            <th style="width:5%;">일일</th>
+                            <th style="width:6%;">누계</th>
+                            <th style="width:5%;">일일</th>
+                            <th style="width:6%;">누계</th>
+                            <th style="width:5%;">통수량</th>
+                            <th style="width:5%;">일일</th>
+                            <th style="width:6%;">누계</th>
+                        </tr>
+                        <tr class="dotted-row">
+                            <td style="font-weight:bold;">전월 미처리량</td>
+                            <td></td>
+                            <td></td>
+                            <td>{dynamic_prev if dynamic_prev > 0 else ''}</td>
+                            <td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td>
+                        </tr>
+                '''
+                
+                # 데이터 행 추가
+                for _, row in df_print.iterrows():
+                    date_val = str(row['발생일자'])
+                    if '-' in date_val:
+                        y, m, d = date_val.split('-')
+                        date_str = f"{y}년 {m}월 {d}일"
+                    else:
+                        date_str = date_val
+
+                    daily_gen = row['일일 발생량(Kg)']
+                    daily_gen_str = int(daily_gen) if daily_gen != '' and int(daily_gen) > 0 else ''
+                    
+                    html_template += f'''<tr class="dotted-row">
+                        <td>{date_str}</td>
+                        <td>{row['성상']}</td>
+                        <td>{daily_gen_str}</td>
+                        <td>{row['누계 발생량(Kg)']}</td>
+                        <td></td><td></td><td></td>
+                        <td>{row['처리방법']}</td>
+                        <td>{row['운반자']}</td>
+                        <td>{row['처리자']}</td>
+                        <td>{row['통수량']}</td>
+                        <td>{row['일일 처리량(Kg)']}</td>
+                        <td>{row['누계 처리량(Kg)']}</td>
+                    </tr>'''
+
+                html_template += f'''
+                        <tr>
+                            <td colspan="2" style="font-weight:bold;">전체 합계</td>
+                            <td>{int(sum_gen) if sum_gen > 0 else '-'}</td>
+                            <td>-</td>
+                            <td></td>
+                            <td>-</td>
+                            <td>-</td>
+                            <td></td>
+                            <td></td>
+                            <td></td>
+                            <td>{int(sum_buckets) if sum_buckets > 0 else '0'}</td>
+                            <td>{int(sum_proc) if sum_proc > 0 else '0'}</td>
+                            <td>-</td>
+                        </tr>
+                    </table>
+                </body>
+                </html>
+                '''
+                
+                st.session_state.html_content = html_template
+                st.session_state.html_filename = f"폐기물관리대장_{year}년_{month}월.html"
                 
             except Exception as e:
-                st.error("먼저 [입력] 탭에서 이번 달 데이터를 저장한 후 출력해주세요.")
+                st.error("데이터를 불러오는 데 실패했습니다. 먼저 [입력] 탭에서 데이터를 저장해주세요.")
+                
+    # 다운로드 버튼 영역
+    if 'html_content' in st.session_state:
+        st.markdown("---")
+        st.success("✅ 문서 렌더링 완료! 아래 버튼을 눌러 양식을 다운로드하세요.")
+        
+        st.download_button(
+            label="📥 인쇄용 대장 다운로드 (클릭하여 열면 PDF 저장 창이 열립니다)",
+            data=st.session_state.html_content,
+            file_name=st.session_state.html_filename,
+            mime="text/html",
+            use_container_width=True
+        )
+        
+        st.info('''
+        💡 **PDF 저장 및 출력 방법 가이드:** 
+        1. 위 버튼을 눌러 `.html` 파일을 다운로드합니다.
+        2. 다운로드된 파일을 더블클릭하여 인터넷 브라우저(크롬, 엣지 등)로 엽니다.
+        3. 문서가 열림과 동시에 **자동으로 인쇄 설정 창**이 나타납니다.
+        4. 대상(프린터) 옵션에서 **'PDF로 저장'**을 선택하면 A4 가로 사이즈로 완벽하게 맞춰진 PDF 파일이 저장됩니다.
+        ''')
 
 
 # --- 탭 4: 월 마감 정산 ---
@@ -261,7 +405,6 @@ with tab4:
                 worksheet = doc.worksheet(f"DB_{year}_{month:02d}")
                 df_print = pd.DataFrame(worksheet.get_all_records())
                 
-                # 빈 문자열을 숫자로 변환할 때 에러 방지
                 total_buckets = pd.to_numeric(df_print['통수량'].replace('', 0)).sum()
                 total_price = total_buckets * unit_price
                 
