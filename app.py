@@ -42,7 +42,7 @@ with tab1:
     month = col2.number_input("월", value=10, min_value=1, max_value=12, step=1)
     num_days = calendar.monthrange(year, month)[1]
     
-    # 전월 미처리량 입력란 삭제, 내부적으로 0으로 고정
+    # 전월 미처리량 내부적으로 0 고정
     prev_unhandled = 0
     
     st.info("💡 **팁:** 기존에 구글 시트에 저장해둔 이번 달 데이터가 있다면 먼저 불러오세요.")
@@ -138,12 +138,28 @@ with tab1:
                     weights = []
                     for d in days_chunk:
                         date_obj = datetime.date(year, month, d)
-                        w = 2.0 if date_obj.weekday() == 4 else 1.0
-                        weights.append(w * random.uniform(0.85, 1.15))
+                        # 요일 확인 (월:0, 화:1, 수:2, 목:3, 금:4, 토:5, 일:6)
+                        if date_obj.weekday() == 5: 
+                            weights.append(0.0) # 토요일은 발생량 0
+                        else:
+                            w = 2.0 if date_obj.weekday() == 4 else 1.0
+                            weights.append(w * random.uniform(0.85, 1.15))
                     
                     total_weight = sum(weights)
-                    allocated = [math.floor(needed_gen * (w / total_weight)) for w in weights]
-                    allocated[-1] += needed_gen - sum(allocated) 
+                    if total_weight > 0:
+                        allocated = [math.floor(needed_gen * (w / total_weight)) for w in weights]
+                        remainder = needed_gen - sum(allocated)
+                        
+                        # 남은 자투리(remainder)를 가중치가 있는 마지막 날짜에 추가 (토요일 제외)
+                        valid_indices = [idx for idx, w in enumerate(weights) if w > 0]
+                        if valid_indices:
+                            allocated[valid_indices[-1]] += remainder
+                        else:
+                            allocated[-1] += remainder
+                    else:
+                        # 만약 기간 내 모두가 토요일인 예외상황이라면 (보통은 불가능하지만) 마지막 날에 배정
+                        allocated = [0] * len(weights)
+                        allocated[-1] = needed_gen
                     
                     for idx, d in enumerate(days_chunk):
                         daily_generated[d - 1] += allocated[idx]
@@ -228,7 +244,7 @@ with tab2:
                 sum_buckets = pd.to_numeric(df_view['통수량'].replace('', 0)).sum()
                 sum_proc = pd.to_numeric(df_view['일일 처리량(Kg)'].replace('', 0)).sum()
 
-                # HTML/CSS 양식 템플릿 제작
+                # HTML/CSS 양식 템플릿 제작 (인쇄 버튼 포함)
                 html_template = f'''
                 <!DOCTYPE html>
                 <html lang="ko">
@@ -249,9 +265,19 @@ with tab2:
                     .main-table th {{ font-weight: bold; background-color: white; }}
                     .border-thick {{ border: 2px solid black !important; }}
                     .dotted-row td {{ border-top: 1px dotted black; border-bottom: 1px dotted black; }}
+                    
+                    /* 인쇄 시 버튼 숨기기 */
+                    @media print {{
+                        .no-print {{ display: none !important; }}
+                    }}
                 </style>
                 </head>
                 <body>
+                    <!-- 다이렉트 인쇄 버튼 -->
+                    <div class="no-print" style="text-align: right; margin-bottom: 20px;">
+                        <button onclick="window.print()" style="padding: 10px 24px; font-size: 16px; font-weight: bold; cursor: pointer; background-color: #004d40; color: white; border: none; border-radius: 6px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">🖨️ 바로 인쇄하기 (PDF 저장)</button>
+                    </div>
+
                     <div class="header-container">
                         <div class="title">폐기물 관리 대장</div>
                         <table class="sign-table border-thick">
@@ -347,22 +373,12 @@ with tab2:
                 </html>
                 '''
                 
-                html_download = html_template.replace("<body>", "<body onload='window.print()'>")
-                
                 st.markdown("---")
-                st.subheader("📄 인쇄 양식 미리보기")
-                components.html(html_template, height=800, scrolling=True)
+                st.subheader("📄 인쇄 양식 (바로 인쇄 가능)")
+                st.info("💡 표 우측 상단의 **[🖨️ 바로 인쇄하기]** 버튼을 누르면 인쇄 및 PDF 저장이 가능합니다.")
                 
-                st.markdown("---")
-                st.success("✅ 문서 내용을 확인하셨다면 아래 버튼을 눌러 인쇄/저장하세요.")
-                
-                st.download_button(
-                    label="📥 인쇄용 대장 다운로드 (클릭하여 열면 PDF 저장 창이 열립니다)",
-                    data=html_download,
-                    file_name=f"폐기물관리대장_{view_year}년_{view_month}월.html",
-                    mime="text/html",
-                    use_container_width=True
-                )
+                # iframe에 버튼이 포함된 HTML 렌더링
+                components.html(html_template, height=850, scrolling=True)
                 
             except gspread.exceptions.WorksheetNotFound:
                 st.warning(f"{view_year}년 {view_month}월의 데이터가 구글 시트에 존재하지 않습니다.")
